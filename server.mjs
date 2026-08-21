@@ -1,0 +1,12 @@
+import express from 'express'; import { createAbacPolicyRegistry, AbacError } from './domain.mjs';
+const registry = createAbacPolicyRegistry(); const app = express(); app.use(express.json()); const actor = request => ({ id: request.header('x-actor-id') || 'anonymous', role: request.header('x-role') || 'anonymous' });
+const handle = (response, work) => { try { response.json(work()); } catch (error) { const status = error instanceof AbacError ? ({ VALIDATION: 400, FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409 }[error.code] || 500) : 500; response.status(status).json({ error: error.code || 'INTERNAL_ERROR', message: error.message }); } };
+app.get('/health', (_, response) => response.json({ status: 'ok', service: 'abac-supplier-policy-governance', policies: registry.count() }));
+app.post('/policies', (request, response) => handle(response, () => registry.define(actor(request), request.body)));
+app.post('/policies/:id/activation-proposals', (request, response) => handle(response, () => registry.proposeActivation(actor(request), request.params.id, request.body.evidence)));
+app.post('/activation-proposals/:id/approve', (request, response) => handle(response, () => registry.approve(actor(request), request.params.id)));
+app.post('/policies/:id/evaluate', (request, response) => handle(response, () => registry.evaluate(actor(request), request.params.id, request.body)));
+app.post('/policies/:id/retire', (request, response) => handle(response, () => registry.retire(actor(request), request.params.id, request.body.reason)));
+app.get('/policies/:id', (request, response) => handle(response, () => registry.get(request.params.id)));
+app.get('/audit-events', (_, response) => response.json({ events: registry.audit() }));
+app.listen(Number(process.env.ABAC_PORT || 26400), '0.0.0.0', () => console.log('supplier ABAC policy governance service ready'));
